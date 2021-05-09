@@ -1,0 +1,168 @@
+using Pkg
+
+Pkg.add("DiffEqFlux")
+Pkg.add("StochasticDiffEq")
+Pkg.add("Plots")
+Pkg.add("DiffEqBase")
+Pkg.add("Statistics")
+Pkg.add("DiffEqSensitivity")
+Pkg.add("RecursiveArrayTools")
+Pkg.add("Flux")
+Pkg.add("Plots")
+using Flux, DiffEqFlux, StochasticDiffEq, Plots, DiffEqBase.EnsembleAnalysis, Statistics, DiffEqSensitivity, RecursiveArrayTools
+Pkg.add("CSV")
+Pkg.add("DataFrames")
+using CSV, DataFrames
+Pkg.add("Optim")
+using Optim
+Pkg.add("DifferentialEquations")
+using DifferentialEquations
+using Base.Iterators: repeated
+using Plots
+
+
+
+sde_data=[exp(x) for  x in -3:3]
+noise_amount=0 .+3*rand(length(sde_data))
+sde_data=sde_data+noise_amount
+ ##sde_data=Flux.normalise(Float64.(sde_data))
+ sde_data=sde_data .+(0-sde_data[1])
+ whole=sde_data
+
+##sect=[i for i in 1:5:length(sde_data)]
+##sde_data=sde_data[sect]
+
+datasize=length(sde_data)
+u_new = Float32[sde_data[1];0.00054;0.0115]
+##reduce the timespan to bypass the local minima.
+tspan=(0.0f0,length(sde_data)-1)
+tsteps=range(tspan[1],tspan[2],length=datasize)
+fixed = FastChain((x,p)->x.^3,FastDense(3, 20, sigmoid),FastDense(20,20,sigmoid),FastDense(20, 3))
+wiener = FastChain(FastDense(3, 20, sigmoid),FastDense(20, 3))
+
+neuralsde = NeuralDSDE(fixed, wiener, tspan, SOSRI(),sensealg=TrackerAdjoint(),
+                       saveat = tsteps, reltol = 1e-1, abstol = 1e-1,allow_f_increases=true)
+
+function predict_neuralsde(p, u=u_new)
+  return Array(neuralsde(u, Float32.(p)))
+end
+
+function loss_neuralsde(p)
+    samples = Array(neuralsde(u_new, p))[1,:]
+    ##option to use regular distance between points and the
+    ##mse
+    ##loss=sum(abs2,Float32.(sde_data) .-Float32.(samples))
+    loss=Flux.mse(Float32.(sde_data),Float32.(samples))
+    return loss,samples
+end
+
+l=loss_neuralsde(neuralsde.p)
+
+list_plots = []
+losses=[]
+PAR=[]
+iter = 0
+
+function call(p,l,s; doplot = true)
+    global list_plots, iter
+iter += 1
+  # loss against current data
+  display(l)
+  push!(losses,l)
+
+ plt = plot(tsteps, sde_data, label = "data")
+      plot!(plt, tsteps, s, label = "prediction",legend=:topleft)
+      push!(list_plots, plt)
+      push!(PAR,p)
+
+if doplot
+    display(plt)
+  end
+
+ return false
+end
+
+opt = ADAM(0.05)
+
+result1 = DiffEqFlux.sciml_train((p) -> loss_neuralsde(p),
+                                 neuralsde.p, opt,
+                                 cb = call, maxiters = 500)
+
+
+#######################################################
+##used right here to break away from the local minima
+##of the first run of the minimizer test
+
+function minimize()
+
+new_sde_data=deepcopy(whole)
+
+results=[]
+
+a=result1.minimizer
+push!(results,a)
+
+j=1
+spot=1
+iter = 0
+new_plots= []
+l_s=[]
+PAR=[]
+
+for i in 2:1:length(new_sde_data)
+    j+=1
+
+    sde_data=deepcopy(new_sde_data[1:i])
+    datasize=length(sde_data)
+    tspan=(0.0f0,length(sde_data)-1)
+    tsteps=range(tspan[1],tspan[2],length=datasize)
+
+    neuralsde = NeuralDSDE(fixed, wiener, tspan, SOSRI(),sensealg=TrackerAdjoint(),saveat = tsteps, reltol = 1e-1, abstol = 1e-1,allow_f_increases=true)
+
+    function loss_neuralsde(p)
+        samples = Array(neuralsde(u_new, p))[1,:]
+        ##loss=sum(abs2,Float32.(sde_data) .-Float32.(samples))
+        loss=Flux.mse(sde_data,samples)
+        return loss,samples
+    end
+
+    l=loss_neuralsde(neuralsde.p)
+
+    function callback(p,l,s; doplot = true)
+        global new_plots
+        global PAR
+        global losses
+
+
+    global iter += 1
+
+      # loss against current data
+      display(l)
+      push!(l_s,l)
+
+     plt = plot(tsteps, sde_data, label = "data")
+          plot!(plt, tsteps, s, label = "prediction",legend=:topleft)
+          push!(list_plots, plt)
+          push!(PAR,p)
+
+    if doplot
+        display(plt)
+      end
+
+      ##plot and info for the minimum total loss
+
+     return false
+    end
+    ##best rate so far.
+
+
+    result= DiffEqFlux.sciml_train((p) -> loss_neuralsde(p),results[j-1], opt,cb = callback, maxiters = 300 )
+    a=result.minimizer
+    push!(results,a)
+end
+    return last(losses),last(list_plots)
+end
+#############################################################
+##call here for minimization according to the criteria set
+
+a,b=minimize()
