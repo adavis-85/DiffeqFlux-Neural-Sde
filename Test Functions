@@ -9,28 +9,20 @@ Pkg.add("DiffEqSensitivity")
 Pkg.add("RecursiveArrayTools")
 Pkg.add("Flux")
 Pkg.add("Plots")
-using Flux, DiffEqFlux, StochasticDiffEq, Plots, DiffEqBase.EnsembleAnalysis, Statistics, DiffEqSensitivity, RecursiveArrayTools
 Pkg.add("CSV")
 Pkg.add("DataFrames")
-using CSV, DataFrames
 Pkg.add("Optim")
-using Optim
 Pkg.add("DifferentialEquations")
-using DifferentialEquations
-using Base.Iterators: repeated
-using Plots
+using Flux, DiffEqFlux, StochasticDiffEq, Plots, DiffEqBase.EnsembleAnalysis, 
+      Statistics, DiffEqSensitivity, RecursiveArrayTools, CSV, DataFrame, Optim, DifferentialEquations, Base.Iterators: repeated, Plots
 
 
 
 sde_data=[exp(x) for  x in -3:3]
 noise_amount=0 .+3*rand(length(sde_data))
 sde_data=sde_data+noise_amount
- ##sde_data=Flux.normalise(Float64.(sde_data))
  sde_data=sde_data .+(0-sde_data[1])
  whole=sde_data
-
-##sect=[i for i in 1:5:length(sde_data)]
-##sde_data=sde_data[sect]
 
 datasize=length(sde_data)
 u_new = Float32[sde_data[1];0.00054;0.0115]
@@ -121,7 +113,6 @@ for i in 2:1:length(new_sde_data)
 
     function loss_neuralsde(p)
         samples = Array(neuralsde(u_new, p))[1,:]
-        ##loss=sum(abs2,Float32.(sde_data) .-Float32.(samples))
         loss=Flux.mse(sde_data,samples)
         return loss,samples
     end
@@ -153,9 +144,7 @@ for i in 2:1:length(new_sde_data)
 
      return false
     end
-    ##best rate so far.
-
-
+    
     result= DiffEqFlux.sciml_train((p) -> loss_neuralsde(p),results[j-1], opt,cb = callback, maxiters = 300 )
     a=result.minimizer
     push!(results,a)
